@@ -21,7 +21,7 @@ from torch import nn
 torch_ver = torch.__version__[:3]
 
 __all__ = ['BatchDrop', 'BatchFeatureErase_Top', 'BatchRandomErasing',
-           'PAM_Module', 'CAM_Module', 'Dual_Module', 'SE_Module']
+           'PAM_Module', 'CAM_Module', 'Dual_Module', 'SE_Module','CoordAtt', 'OcclusionAwareAttention']
 
 # 批量随机擦除
 class BatchRandomErasing(nn.Module):
@@ -296,3 +296,91 @@ class Dual_Module(Module):
         out1 = self.pam(x)
         out2 = self.cam(x)
         return out1 + out2
+
+class CoordAtt(nn.Module):
+    def __init__(self, inp, oup, reduction=32):
+        super(CoordAtt, self).__init__()
+        self.pool_h = nn.AdaptiveAvgPool2d((None, 1))
+        self.pool_w = nn.AdaptiveAvgPool2d((1, None))
+
+        mip = max(8, inp // reduction)
+
+        self.conv1 = nn.Conv2d(inp, mip, kernel_size=1, stride=1, padding=0)
+        self.bn1 = nn.BatchNorm2d(mip)
+        self.act = nn.Hardswish() # 或者使用简单的 ReLU
+        
+        self.conv_h = nn.Conv2d(mip, oup, kernel_size=1, stride=1, padding=0)
+        self.conv_w = nn.Conv2d(mip, oup, kernel_size=1, stride=1, padding=0)
+        
+    def forward(self, x):
+        identity = x
+        n, c, h, w = x.size()
+        x_h = self.pool_h(x)
+        x_w = self.pool_w(x).permute(0, 1, 3, 2)
+
+        y = torch.cat([x_h, x_w], dim=2)
+        y = self.conv1(y)
+        y = self.bn1(y)
+        y = self.act(y) 
+        
+        x_h, x_w = torch.split(y, [h, w], dim=2)
+        x_w = x_w.permute(0, 1, 3, 2)
+
+        a_h = self.conv_h(x_h).sigmoid()
+        a_w = self.conv_w(x_w).sigmoid()
+
+        out = identity * a_w * a_h
+        return out
+
+#
+class OcclusionAwareAttention(nn.Module):
+    """
+    自定义注意力模块：
+    Q: 全局完整特征 (Global Features)
+    K, V: 关键区域被擦除后的特征 (Occluded Features)
+    旨在通过全局上下文去重构或增强残缺特征的表示。
+    """
+    def __init__(self, in_dim):
+        super(OcclusionAwareAttention, self).__init__()
+        self.chanel_in = in_dim
+
+        # Q, K, V 投影层
+        self.query_conv = Conv2d(in_channels=in_dim, out_channels=in_dim // 8, kernel_size=1)
+        self.key_conv = Conv2d(in_channels=in_dim, out_channels=in_dim // 8, kernel_size=1)
+        self.value_conv = Conv2d(in_channels=in_dim, out_channels=in_dim, kernel_size=1)
+        
+        # 学习一个系数 gamma，初始为0，保证初始状态下不破坏原有特征分布
+        self.gamma = Parameter(torch.zeros(1))
+        self.softmax = Softmax(dim=-1)
+
+    def forward(self, x_global, x_occluded):
+        """
+        inputs :
+            x_global : 全局特征 (B X C X H X W) -> Q
+            x_occluded : 擦除后特征 (B X C X H X W) -> K, V
+        """
+        m_batchsize, C, height, width = x_global.size()
+        
+        # 1. 生成 Query (来自 Global)
+        proj_query = self.query_conv(x_global).view(m_batchsize, -1, width * height).permute(0, 2, 1)
+        
+        # 2. 生成 Key (来自 Occluded)
+        proj_key = self.key_conv(x_occluded).view(m_batchsize, -1, width * height)
+        
+        # 3. 计算 Attention Map
+        # Q * K^T: 探索全局特征的某个位置与残缺特征的某个位置的相关性
+        energy = torch.bmm(proj_query, proj_key)
+        attention = self.softmax(energy)
+        
+        # 4. 生成 Value (来自 Occluded)
+        proj_value = self.value_conv(x_occluded).view(m_batchsize, -1, width * height)
+
+        # 5. 加权融合 V * Attention^T
+        out = torch.bmm(proj_value, attention.permute(0, 2, 1))
+        out = out.view(m_batchsize, C, height, width)
+
+        # 6. Residual Connection (残差连接到 Global 上，还是 Occluded 上？)
+        # 通常不仅要融合信息，还要保留原始 Query 的上下文。
+        # 这里我们将学到的“补全信息”加回到 Global 特征上，使其更鲁棒。
+        out = self.gamma * out + x_global
+        return out

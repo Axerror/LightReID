@@ -1,3 +1,7 @@
 cd LightMBN-master
 python main.py --config lmbn_config.yaml --save test_5-epochs
 python main.py --datadir E:\Code\LightMBN-master\ReIDataset --data_train market1501 --data_test market1501 --model LMBN_n --batchid 6 --batchimage 4 --batchtest 16 --test_every 10 --epochs 100 --loss 0.5*CrossEntropy+0.5*MSLoss --margin 0.7 --nGPU 1 --lr 6e-4 --optimizer ADAM --random_erasing --feats 256 --save epoch5 --if_labelsmooth --w_cosine_annealing --wandb --wandb_name LightMBN_origin
+python main.py --datadir E:\Code\LightMBN-master\ReIDataset --data_train market1501 --data_test market1501 --model LMBN_n --batchid 6 --batchimage 4 --batchtest 16 --test_every 1 --epochs 5 --loss 0.5*CrossEntropy+0.5*MSLoss --margin 0.7 --nGPU 1 --lr 6e-4 --optimizer ADAM --random_erasing --feats 256 --save epoch5 --if_labelsmooth --w_cosine_annealing --wandb --wandb_name LightMBN_origin
+LMBN_Global_SA
+python main.py --datadir E:\Code\LightMBN-master\ReIDataset --data_train market1501 --data_test market1501 --model LMBN_Global_SA --batchid 6 --batchimage 4 --batchtest 16 --test_every 10 --epochs 200 --loss 0.5*CrossEntropy+0.5*MSLoss --margin 0.7 --nGPU 1 --lr 6e-4 --optimizer ADAM --random_erasing --feats 256 --save LMBN_Global_SA2 --if_labelsmooth --w_cosine_annealing --wandb --wandb_name LightMBN_origin
+
